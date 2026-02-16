@@ -7,7 +7,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.errors import FloodWait
 
 from config import env_vars
-from fontes.mangadex import MangadexClient
+from fontes.mangalivre import MangalivreClient
 
 # =====================================
 # 🔐 Verificação de variáveis obrigatórias
