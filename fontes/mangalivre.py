@@ -1,5 +1,5 @@
 import os
-import requests
+import cloudscraper
 from bs4 import BeautifulSoup
 from pathlib import Path
 from zipfile import ZipFile
@@ -9,18 +9,17 @@ class MangaLivreClient:
     name = "MangaLivre"
     base_url = "https://mangalivre.tv"
 
-    headers = {
-        "User-Agent": "Mozilla/5.0",
-        "Referer": base_url
-    }
+    def __init__(self):
+        self.scraper = cloudscraper.create_scraper()
 
-    # ==========================================
-    # 🔎 BUSCA CORRIGIDA (funciona em Madara)
-    # ==========================================
+    # ==============================
+    # 🔎 BUSCA (Cloudflare bypass)
+    # ==============================
     async def search(self, query: str):
         try:
             url = f"{self.base_url}/?s={query}&post_type=wp-manga"
-            r = requests.get(url, headers=self.headers, timeout=15)
+            r = self.scraper.get(url, timeout=20)
+
             soup = BeautifulSoup(r.text, "lxml")
 
             mangas = []
@@ -32,15 +31,16 @@ class MangaLivreClient:
 
             return mangas
 
-        except Exception:
+        except Exception as e:
+            print("Erro busca:", e)
             return []
 
-    # ==========================================
+    # ==============================
     # 📖 CAPÍTULOS
-    # ==========================================
+    # ==============================
     async def get_chapters(self, manga):
         try:
-            r = requests.get(manga["url"], headers=self.headers, timeout=15)
+            r = self.scraper.get(manga["url"], timeout=20)
             soup = BeautifulSoup(r.text, "lxml")
 
             chapters = []
@@ -51,18 +51,18 @@ class MangaLivreClient:
                     "manga": manga
                 })
 
-            chapters.reverse()  # Ordem correta
-
+            chapters.reverse()
             return chapters
 
-        except Exception:
+        except Exception as e:
+            print("Erro capítulos:", e)
             return []
 
-    # ==========================================
+    # ==============================
     # 📥 DOWNLOAD + CBZ
-    # ==========================================
+    # ==============================
     async def download_chapter(self, chapter):
-        r = requests.get(chapter["url"], headers=self.headers, timeout=20)
+        r = self.scraper.get(chapter["url"], timeout=30)
         soup = BeautifulSoup(r.text, "lxml")
 
         imgs = []
@@ -73,7 +73,7 @@ class MangaLivreClient:
                 imgs.append(img["src"])
 
         if not imgs:
-            raise Exception("Sem imagens no capítulo")
+            raise Exception("Sem imagens")
 
         folder = Path("cache") / chapter["name"].replace(" ", "_")
         folder.mkdir(parents=True, exist_ok=True)
@@ -85,7 +85,8 @@ class MangaLivreClient:
                 ext = img_url.split(".")[-1].split("?")[0]
                 path = folder / f"{i+1}.{ext}"
 
-                img_data = requests.get(img_url, headers=self.headers, timeout=20).content
+                img_data = self.scraper.get(img_url, timeout=30).content
+
                 with open(path, "wb") as f:
                     f.write(img_data)
 
@@ -100,7 +101,7 @@ class MangaLivreClient:
             for img_path in paths:
                 zipf.write(img_path, img_path.name)
 
-        # Limpeza imediata para Railway
+        # Limpeza Railway
         for img_path in paths:
             os.remove(img_path)
 
