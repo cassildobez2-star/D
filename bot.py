@@ -45,7 +45,7 @@ async def get_user_lock(user_id):
 # =====================================
 @bot.on_message(filters.command("start"))
 async def start_handler(client, message):
-    await message.reply("✅ Bot online e funcionando!")
+    await message.reply("✅ Yuki308 e funcionando!")
 
 # =====================================
 # 🔎 Comando /buscar
