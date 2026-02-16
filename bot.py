@@ -1,176 +1,186 @@
-import os
 import asyncio
-from pyrogram import Client, filters
-from pyrogram.types import (
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-    CallbackQuery
-)
+import os
+from pathlib import Path
 from loguru import logger
+from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.errors import FloodWait
+
+from config import env_vars
+from fontes.mangalivre import MangaLivreClient
+
 from sources.mangadex import MangaDexClient
-
-# ==============================
-# CONFIG
-# ==============================
-
-API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-if not API_ID or not API_HASH or not BOT_TOKEN:
-    raise RuntimeError("Variáveis de ambiente não configuradas.")
-
-app = Client(
-    "manga_bot",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN
-)
 
 source = MangaDexClient()
 
-# Cache simples em memória
-SEARCH_CACHE = {}
-CHAPTER_CACHE = {}
+# =====================================
+# 🔐 Verificação de variáveis obrigatórias
+# =====================================
+if not env_vars.get("API_ID") or not env_vars.get("API_HASH") or not env_vars.get("BOT_TOKEN"):
+    raise ValueError("Variáveis API_ID, API_HASH ou BOT_TOKEN não configuradas.")
 
-# ==============================
-# START
-# ==============================
+# =====================================
+# 🚀 Inicialização do bot
+# =====================================
+bot = Client(
+    "bot",
+    api_id=int(env_vars.get("API_ID")),
+    api_hash=env_vars.get("API_HASH"),
+    bot_token=env_vars.get("BOT_TOKEN"),
+    workers=10
+)
 
-@app.on_message(filters.command("start"))
+mangalivre = MangaLivreClient()
+
+mangas = {}
+chapters = {}
+locks = {}
+
+# =====================================
+# 🔒 Lock por usuário
+# =====================================
+async def get_user_lock(user_id):
+    if user_id not in locks:
+        locks[user_id] = asyncio.Lock()
+    return locks[user_id]
+
+# =====================================
+# ✅ Comando /start
+# =====================================
+@bot.on_message(filters.command("start"))
 async def start_handler(client, message):
-    await message.reply(
-        "📚 Yuki308 Online\n\n"
-        "Use:\n"
-        "/buscar nome_do_manga"
-    )
+    await message.reply("✅ Yuki308 online e funcionando!")
 
-# ==============================
-# BUSCAR
-# ==============================
-
-@app.on_message(filters.command("buscar"))
-async def buscar_handler(client, message):
-    if len(message.command) < 2:
-        return await message.reply("Use: /buscar nome_do_manga")
-
-    query = " ".join(message.command[1:])
-
-    msg = await message.reply("🔎 Buscando...")
-
+# =====================================
+# 🔎 Comando /buscar
+# =====================================
+@bot.on_message(filters.command("buscar"))
+async def buscar(client, message):
     try:
-        results = await source.search(query)
+        if len(message.command) < 2:
+            await message.reply("Use: /buscar <nome do mangá>")
+            return
+
+        query = " ".join(message.command[1:])
+        await message.reply("🔎 Buscando...")
+
+        results = await mangalivre.search(query)
+
+        if not results:
+            await message.reply("❌ Nenhum resultado encontrado.")
+            return
+
+        buttons = []
+        for i, m in enumerate(results[:15]):  # Limita para evitar flood
+            key = f"manga_{message.id}_{i}"
+            mangas[key] = m
+            buttons.append([InlineKeyboardButton(m["name"], callback_data=key)])
+
+        await message.reply("📚 Resultados:", reply_markup=InlineKeyboardMarkup(buttons))
+
     except Exception as e:
-        logger.error(e)
-        return await msg.edit("❌ Erro na busca.")
+        logger.exception(e)
+        await message.reply("❌ Erro ao buscar.")
 
-    if not results:
-        return await msg.edit("❌ Nenhum resultado encontrado.")
+# =====================================
+# 📖 Seleção de mangá
+# =====================================
+@bot.on_callback_query(filters.regex(r"^manga_"))
+async def select_manga(client, callback):
+    try:
+        if callback.data not in mangas:
+            await callback.answer("Expirado.", show_alert=True)
+            return
 
-    SEARCH_CACHE[message.from_user.id] = results
+        manga = mangas[callback.data]
+        chap_list = await mangalivre.get_chapters(manga)
 
-    buttons = []
-    for i, manga in enumerate(results):
-        buttons.append(
-            [InlineKeyboardButton(manga["name"], callback_data=f"manga_{i}")]
+        if not chap_list:
+            await callback.message.edit("❌ Nenhum capítulo encontrado.")
+            return
+
+        buttons = []
+        for i, ch in enumerate(chap_list[:30]):  # Limite segurança
+            key = f"chapter_{callback.message.id}_{i}"
+            chapters[key] = ch
+            buttons.append([InlineKeyboardButton(ch["name"], callback_data=key)])
+
+        await callback.message.edit(
+            f"📖 Capítulos de {manga['name']}:",
+            reply_markup=InlineKeyboardMarkup(buttons)
         )
 
-    await msg.edit(
-        "📖 Selecione o mangá:",
-        reply_markup=InlineKeyboardMarkup(buttons)
-    )
-
-# ==============================
-# ESCOLHER MANGÁ
-# ==============================
-
-@app.on_callback_query(filters.regex(r"^manga_"))
-async def manga_selected(client, callback: CallbackQuery):
-    index = int(callback.data.split("_")[1])
-    user_id = callback.from_user.id
-
-    if user_id not in SEARCH_CACHE:
-        return await callback.answer("Sessão expirada.", show_alert=True)
-
-    manga = SEARCH_CACHE[user_id][index]
-
-    msg = await callback.message.edit("📚 Carregando capítulos...")
-
-    try:
-        chapters = await source.get_chapters(manga)
     except Exception as e:
-        logger.error(e)
-        return await msg.edit("❌ Erro ao buscar capítulos.")
+        logger.exception(e)
+        await callback.message.edit("❌ Erro ao carregar capítulos.")
 
-    if not chapters:
-        return await msg.edit("❌ Nenhum capítulo encontrado.")
+# =====================================
+# 📥 Seleção de capítulo
+# =====================================
+@bot.on_callback_query(filters.regex(r"^chapter_"))
+async def select_chapter(client, callback):
+    try:
+        if callback.data not in chapters:
+            await callback.answer("Expirado.", show_alert=True)
+            return
 
-    CHAPTER_CACHE[user_id] = chapters
+        chapter = chapters[callback.data]
 
-    buttons = []
-    for i, chapter in enumerate(chapters[:50]):  # Limite para evitar flood
-        buttons.append(
-            [InlineKeyboardButton(chapter["name"], callback_data=f"chap_{i}")]
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📥 Baixar este capítulo", callback_data=f"download_{callback.data}")]
+        ])
+
+        await callback.message.edit(
+            f"Selecionado:\n{chapter['name']}",
+            reply_markup=keyboard
         )
 
-    await msg.edit(
-        "📑 Selecione o capítulo:",
-        reply_markup=InlineKeyboardMarkup(buttons)
-    )
-
-# ==============================
-# ESCOLHER CAPÍTULO
-# ==============================
-
-@app.on_callback_query(filters.regex(r"^chap_"))
-async def chapter_selected(client, callback: CallbackQuery):
-    index = int(callback.data.split("_")[1])
-    user_id = callback.from_user.id
-
-    if user_id not in CHAPTER_CACHE:
-        return await callback.answer("Sessão expirada.", show_alert=True)
-
-    chapter = CHAPTER_CACHE[user_id][index]
-
-    msg = await callback.message.edit("📥 Baixando capítulo...")
-
-    try:
-        cbz_path = await source.download_chapter(chapter)
     except Exception as e:
-        logger.error(e)
-        return await msg.edit("❌ Erro ao baixar capítulo.")
+        logger.exception(e)
 
+# =====================================
+# 📦 Download seguro com limpeza imediata
+# =====================================
+@bot.on_callback_query(filters.regex(r"^download_"))
+async def download_chapter(client, callback):
     try:
-        await callback.message.reply_document(
-            document=str(cbz_path),
-            caption=chapter["name"]
-        )
+        key = callback.data.replace("download_", "")
+
+        if key not in chapters:
+            await callback.answer("Expirado.", show_alert=True)
+            return
+
+        chapter = chapters[key]
+        user_id = callback.from_user.id
+
+        await callback.message.edit("⬇️ Baixando...")
+
+        lock = await get_user_lock(user_id)
+
+        async with lock:
+            cbz_path = await mangalivre.download_chapter(chapter)
+
+            try:
+                await client.send_document(user_id, str(cbz_path))
+            except FloodWait as e:
+                await asyncio.sleep(e.value)
+                await client.send_document(user_id, str(cbz_path))
+
+            # 🔥 Apaga imediatamente após envio
+            if cbz_path.exists():
+                cbz_path.unlink()
+
+        await callback.message.edit("✅ Capítulo enviado!")
+
     except Exception as e:
-        logger.error(e)
-        await msg.edit("❌ Erro ao enviar arquivo.")
-    finally:
-        # 🔥 Limpeza Railway imediata
-        try:
-            if os.path.exists(cbz_path):
-                os.remove(cbz_path)
-        except:
-            pass
+        logger.exception(e)
+        await callback.message.edit("❌ Erro no download.")
 
-    await msg.delete()
-
-# ==============================
-# ERROS GLOBAIS
-# ==============================
-
-@app.on_message()
-async def ignore_other_messages(client, message):
-    pass
-
-
-# ==============================
-# MAIN
-# ==============================
-
+# =====================================
+# 🚀 Inicialização
+# =====================================
 if __name__ == "__main__":
-    logger.info("Bot iniciando...")
-    app.run()
+    Path("cache").mkdir(exist_ok=True)
+
+    logger.info("🚀 Bot iniciado no Railway!")
+    bot.run()
