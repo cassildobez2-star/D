@@ -7,7 +7,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.errors import FloodWait
 
 from config import env_vars
-from fontes.mangalivre import MangalivreClient
+from fontes.mangalivre import MangaLivreClient
 
 # =====================================
 # 🔐 Verificação de variáveis obrigatórias
@@ -45,7 +45,7 @@ async def get_user_lock(user_id):
 # =====================================
 @bot.on_message(filters.command("start"))
 async def start_handler(client, message):
-    await message.reply("✅ Yuki308 online e funcionando!")
+    await message.reply("✅ Bot online e funcionando!")
 
 # =====================================
 # 🔎 Comando /buscar
