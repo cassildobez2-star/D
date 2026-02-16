@@ -1,5 +1,5 @@
-pyrogram
-tgcrypto
-aiohttp
-Pillow
-reportlab
+pyrogram==2.0.106
+tgcrypto==1.2.5
+aiohttp==3.9.1
+Pillow==10.2.0
+reportlab==4.0.8
