@@ -1,43 +1,31 @@
+import os
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-from config import BOT_TOKEN
-from services.manga_source import buscar_manga
+from telegram.ext import Application, CommandHandler, ContextTypes
+
+TOKEN = os.environ.get("BOT_TOKEN")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "📚 Bot de Mangá Online!\n\nUse:\n/buscar nome_do_manga"
-    )
+    await update.message.reply_text("📚 Bot de Mangá Online!")
 
 async def buscar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("Digite o nome do mangá.\nEx: /buscar naruto")
+        await update.message.reply_text("Use: /buscar nome_do_manga")
         return
 
     nome = " ".join(context.args)
-    await update.message.reply_text("🔎 Buscando...")
-
-    resultados = buscar_manga(nome)
-
-    if not resultados:
-        await update.message.reply_text("❌ Nada encontrado.")
-        return
-
-    resposta = "📖 Resultados:\n\n"
-    for titulo, link in resultados:
-        resposta += f"{titulo}\n{link}\n\n"
-
-    await update.message.reply_text(resposta)
+    await update.message.reply_text(f"🔎 Buscando por: {nome}")
 
 def main():
-    if not BOT_TOKEN:
-        raise ValueError("BOT_TOKEN não configurado!")
+    if not TOKEN:
+        print("ERRO: BOT_TOKEN não encontrado!")
+        return
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("buscar", buscar))
 
-    print("Bot de mangá rodando...")
+    print("✅ Bot rodando...")
     app.run_polling()
 
 if __name__ == "__main__":
